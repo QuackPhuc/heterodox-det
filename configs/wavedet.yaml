@@ -1,0 +1,44 @@
+# WaveDetNet Configuration
+
+model:
+  arch: wavedet
+  pretrained: false
+  feat_channels: 128
+  num_proposals: 100
+  num_classes: 15
+  num_wave_steps: 8
+  wave_dt: 0.3
+
+data:
+  img_size: 640
+  mosaic: false
+  augment: true
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  flip_lr: 0.5
+  flip_ud: 0.0
+
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 1.0e-3
+  lr_min: 1.0e-5
+  weight_decay: 5.0e-4
+  warmup_epochs: 3
+  scheduler: cosine
+  grad_clip: 10.0
+
+loss:
+  cls_weight: 1.0
+  reg_weight: 5.0
+  angle_weight: 1.0
+  iou_weight: 2.0
+  conf_weight: 1.0
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+
+eval:
+  conf_thresh: 0.25
+  nms_thresh: 0.45
+  iou_thresholds: [0.5]
