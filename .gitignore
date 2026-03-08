@@ -41,6 +41,6 @@ events.out.tfevents.*
 # Docs (WIP — not ready for public)
 docs/
 
-# Data
-data/
-datasets/
+# Data (root-level only — not src/data/)
+/data/
+/datasets/
