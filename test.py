@@ -41,7 +41,7 @@ def parse_args():
         "--arch",
         type=str,
         default=None,
-        choices=["otdet", "wavedet", "scalenet", "toponet", "flownet"],
+        choices=["otdet", "wavedet", "scalenet", "toponet", "flownet", "infogeonet"],
         help="Architecture (auto-detected from checkpoint if not given)",
     )
     p.add_argument("--data", type=str, required=True)
@@ -74,6 +74,7 @@ def evaluate():
             "scalenet": "configs/scalenet.yaml",
             "toponet": "configs/toponet.yaml",
             "flownet": "configs/flownet.yaml",
+            "infogeonet": "configs/infogeonet.yaml",
         }
         with open(config_map[arch], "r") as f:
             cfg = yaml.safe_load(f)

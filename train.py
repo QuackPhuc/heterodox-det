@@ -96,7 +96,7 @@ def parse_args():
         "--arch",
         type=str,
         default="otdet",
-        choices=["otdet", "wavedet", "scalenet", "toponet", "flownet"],
+        choices=["otdet", "wavedet", "scalenet", "toponet", "flownet", "infogeonet"],
     )
     p.add_argument("--data", type=str, required=True)
     p.add_argument("--config", type=str, default=None)
@@ -190,6 +190,10 @@ ARCH_SPECIFIC_KEYS = {
         "model": ["ode_steps", "ode_method"],
         "loss": ["conf_weight"],
     },
+    "infogeonet": {
+        "model": ["num_fisher_samples", "fisher_eps", "mc_blend"],
+        "loss": ["conf_weight"],
+    },
 }
 
 
@@ -249,6 +253,7 @@ def train():
             "scalenet": "configs/scalenet.yaml",
             "toponet": "configs/toponet.yaml",
             "flownet": "configs/flownet.yaml",
+            "infogeonet": "configs/infogeonet.yaml",
         }
         args.config = config_map[args.arch]
     cfg = load_config(args.config)

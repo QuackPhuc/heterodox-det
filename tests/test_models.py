@@ -1,65 +1,29 @@
-"""Tests for all 5 detection architectures.
+"""Tests for all 6 detection architectures.
 
 Each architecture is tested at two levels:
 1. Generic contract: output shapes, key presence, gradient flow, inference format
 2. Architecture-specific mathematical properties:
    - OTDet: transport plan marginals, non-negativity
    - WaveDetNet: energy non-negativity, wave speed positivity
-   - ScaleNet: peak detection in scale-space
+   - ScaleNet: scale positivity, scale-feature spatial structure
    - TopoNet: persistence map range, filtration properties
    - FlowNet: convergence map range, contractiveness indication
+   - InfoGeoNet: Fisher map non-negativity, spatial field properties
 """
 
 import pytest
 import torch
 
-from models import OTDet, WaveDetNet, ScaleNet, TopoNet, FlowNet
-from conftest import NUM_CLASSES, FEAT_CHANNELS, NUM_PROPOSALS, IMG_SIZE, BATCH_SIZE
+from models import InfoGeoNet
+from conftest import (
+    ARCHITECTURES,
+    NUM_CLASSES,
+    FEAT_CHANNELS,
+    NUM_PROPOSALS,
+    IMG_SIZE,
+    BATCH_SIZE,
+)
 
-
-# ---------------------------------------------------------------------------
-# Parametrized model constructors
-# ---------------------------------------------------------------------------
-
-ARCHITECTURES = {
-    "otdet": lambda dev: OTDet(
-        num_classes=NUM_CLASSES,
-        num_slots=NUM_PROPOSALS,
-        feat_channels=FEAT_CHANNELS,
-        pretrained_backbone=False,
-        sinkhorn_iters=5,
-        img_size=IMG_SIZE,
-    ).to(dev),
-    "wavedet": lambda dev: WaveDetNet(
-        num_classes=NUM_CLASSES,
-        feat_channels=FEAT_CHANNELS,
-        num_proposals=NUM_PROPOSALS,
-        num_wave_steps=4,
-        img_size=IMG_SIZE,
-    ).to(dev),
-    "scalenet": lambda dev: ScaleNet(
-        num_classes=NUM_CLASSES,
-        feat_channels=FEAT_CHANNELS,
-        num_proposals=NUM_PROPOSALS,
-        num_scales=4,
-        sigma_range=(0.5, 4.0),
-        img_size=IMG_SIZE,
-    ).to(dev),
-    "toponet": lambda dev: TopoNet(
-        num_classes=NUM_CLASSES,
-        feat_channels=FEAT_CHANNELS,
-        num_proposals=NUM_PROPOSALS,
-        num_filtration_steps=4,
-        img_size=IMG_SIZE,
-    ).to(dev),
-    "flownet": lambda dev: FlowNet(
-        num_classes=NUM_CLASSES,
-        feat_channels=FEAT_CHANNELS,
-        num_proposals=NUM_PROPOSALS,
-        ode_steps=4,
-        img_size=IMG_SIZE,
-    ).to(dev),
-}
 
 REQUIRED_KEYS = {"centers", "wh", "angles", "cls_logits", "conf", "mass"}
 
@@ -122,6 +86,7 @@ class TestInference:
 
     def test_result_format(self, model, dummy_images):
         results = model.inference(dummy_images, conf_thresh=0.0)
+        assert not model.training, "Model should be in eval mode after inference"
         assert len(results) == BATCH_SIZE
         for r in results:
             assert r["obbs"].ndim == 2 and r["obbs"].shape[1] == 5
@@ -151,28 +116,28 @@ class TestOTDet:
     def otdet_model(self, device):
         return ARCHITECTURES["otdet"](device)
 
-    def test_transport_plan_non_negative(self, otdet_model, dummy_images):
+    @pytest.fixture
+    def preds(self, otdet_model, dummy_images):
+        return otdet_model(dummy_images)
+
+    def test_transport_plan_non_negative(self, preds):
         """π(pixel, slot) ≥ 0 — fundamental OT constraint."""
-        preds = otdet_model(dummy_images)
         assert preds["transport_plan"].min() >= -1e-7
 
-    def test_transport_plan_row_marginals(self, otdet_model, dummy_images):
+    def test_transport_plan_row_marginals(self, preds):
         """Row sums of π should approximate the source distribution μ.
 
         This verifies Σ_k π(i, k) ≈ μ(i) — the Sinkhorn algorithm
         enforces this marginal constraint at convergence.
         """
-        preds = otdet_model(dummy_images)
         plan = preds["transport_plan"]  # (B, N, K)
         row_sums = plan.sum(dim=2)  # (B, N)
-        # Each pixel's total transport should be close to uniform 1/N
         N = plan.shape[1]
         expected = 1.0 / N
         assert (row_sums.mean() - expected).abs() < 0.1
 
-    def test_objectness_map_range(self, otdet_model, dummy_images):
+    def test_objectness_map_range(self, preds):
         """Objectness map ∈ [0, 1] — sigmoid activation ensures valid distribution."""
-        preds = otdet_model(dummy_images)
         obj = preds["objectness_map"]
         assert obj.min() >= 0.0 and obj.max() <= 1.0
 
@@ -190,14 +155,16 @@ class TestWaveDetNet:
     def wavedet_model(self, device):
         return ARCHITECTURES["wavedet"](device)
 
-    def test_energy_non_negative(self, wavedet_model, dummy_images):
+    @pytest.fixture
+    def preds(self, wavedet_model, dummy_images):
+        return wavedet_model(dummy_images)
+
+    def test_energy_non_negative(self, preds):
         """Accumulated wave energy E(x) = Σ|u|² must be ≥ 0."""
-        preds = wavedet_model(dummy_images)
         assert preds["energy"].min() >= -1e-7
 
-    def test_wave_speed_positive(self, wavedet_model, dummy_images):
+    def test_wave_speed_positive(self, preds):
         """Wave speed c(x) must be positive (softplus output)."""
-        preds = wavedet_model(dummy_images)
         assert preds["wave_speed"].min() > 0.0
 
 
@@ -213,14 +180,28 @@ class TestScaleNet:
     def scalenet_model(self, device):
         return ARCHITECTURES["scalenet"](device)
 
-    def test_proposals_within_image_bounds(self, scalenet_model, dummy_images):
+    @pytest.fixture
+    def preds(self, scalenet_model, dummy_images):
+        return scalenet_model(dummy_images)
+
+    def test_proposals_within_image_bounds(self, preds):
         """Detected extrema centers should lie within the image domain."""
-        preds = scalenet_model(dummy_images)
         centers = preds["centers"]
         assert centers[:, :, 0].min() >= -IMG_SIZE * 0.1
         assert centers[:, :, 1].min() >= -IMG_SIZE * 0.1
         assert centers[:, :, 0].max() <= IMG_SIZE * 1.1
         assert centers[:, :, 1].max() <= IMG_SIZE * 1.1
+
+    def test_sigmas_positive(self, preds):
+        """Characteristic scales σ* must be strictly positive."""
+        sigmas = preds["sigmas"]
+        assert sigmas.min() > 0.0, f"Non-positive sigma detected: {sigmas.min()}"
+
+    def test_scale_feats_shape(self, preds):
+        """Scale-space features should be a 5D tensor (B, S, C, H, W)."""
+        sf = preds["scale_feats"]
+        assert sf.ndim == 5, "scale_feats should be (B, S, C, H, W)"
+        assert sf.shape[0] == BATCH_SIZE
 
 
 class TestTopoNet:
@@ -237,16 +218,18 @@ class TestTopoNet:
     def toponet_model(self, device):
         return ARCHITECTURES["toponet"](device)
 
-    def test_persistence_map_range(self, toponet_model, dummy_images):
+    @pytest.fixture
+    def preds(self, toponet_model, dummy_images):
+        return toponet_model(dummy_images)
+
+    def test_persistence_map_range(self, preds):
         """Persistence map values ∈ [0, 1] — product of (1-birth) × stability."""
-        preds = toponet_model(dummy_images)
         pm = preds["persistence_map"]
         assert pm.min() >= -1e-6, f"Persistence map has negative values: {pm.min()}"
         assert pm.max() <= 1.0 + 1e-6
 
-    def test_filtration_is_spatial(self, toponet_model, dummy_images):
+    def test_filtration_is_spatial(self, preds):
         """Filtration function should produce a 2D scalar field over the image."""
-        preds = toponet_model(dummy_images)
         filt = preds["filtration"]
         assert filt.shape[0] == BATCH_SIZE
         assert filt.shape[1] == 1, "Filtration should be single-channel"
@@ -266,15 +249,95 @@ class TestFlowNet:
     def flownet_model(self, device):
         return ARCHITECTURES["flownet"](device)
 
-    def test_convergence_map_range(self, flownet_model, dummy_images):
+    @pytest.fixture
+    def preds(self, flownet_model, dummy_images):
+        return flownet_model(dummy_images)
+
+    def test_convergence_map_range(self, preds):
         """Convergence map = 1/(1+|v|) is strictly in (0, 1]."""
-        preds = flownet_model(dummy_images)
         cm = preds["convergence_map"]
         assert cm.min() > 0.0, "Convergence map must be strictly positive"
         assert cm.max() <= 1.0 + 1e-6
 
-    def test_trajectory_variance_non_negative(self, flownet_model, dummy_images):
+    def test_trajectory_variance_non_negative(self, preds):
         """Trajectory variance (Welford output) must be ≥ 0."""
-        preds = flownet_model(dummy_images)
         tv = preds["trajectory_var"]
         assert tv.min() >= -1e-7
+
+
+class TestInfoGeoNet:
+    """Information Geometry Detection — Fisher Information properties.
+
+    Theory (Hypothesis 4): Pixels with high Fisher Information carry
+    discriminative features. Fisher diagonal F_ii = p_i(1-p_i) where
+    p_i is the predicted class probability (Bernoulli variance).
+      - Fisher map ≥ 0 (variance is non-negative)
+      - Fisher map is a single-channel spatial field
+    """
+
+    @pytest.fixture
+    def infogeonet_model(self, device):
+        return ARCHITECTURES["infogeonet"](device)
+
+    @pytest.fixture
+    def preds(self, infogeonet_model, dummy_images):
+        return infogeonet_model(dummy_images)
+
+    def test_fisher_map_non_negative(self, preds):
+        """Fisher Information (Bernoulli variance) must be ≥ 0."""
+        fm = preds["fisher_map"]
+        assert fm.min() >= -1e-7, f"Fisher map has negative values: {fm.min()}"
+
+    def test_fisher_map_is_spatial(self, preds):
+        """Fisher map should be a single-channel 2D field over the image."""
+        fm = preds["fisher_map"]
+        assert fm.shape[0] == BATCH_SIZE
+        assert fm.shape[1] == 1, "Fisher map should be single-channel"
+
+    def test_mc_fisher_gradient_flow(self, device, dummy_images):
+        """MC refinement path must pass gradients through to Fisher params."""
+        model = InfoGeoNet(
+            num_classes=NUM_CLASSES,
+            feat_channels=FEAT_CHANNELS,
+            num_proposals=NUM_PROPOSALS,
+            num_fisher_samples=3,
+            img_size=IMG_SIZE,
+        ).to(device)
+        model.train()
+        preds = model(dummy_images)
+        preds["fisher_map"].sum().backward()
+        assert model.fisher.temperature.grad is not None
+        assert model.fisher.temperature.grad.abs().sum() > 0
+
+    def test_mc_refinement_alters_fisher(self, device, dummy_images):
+        """MC Fisher refinement should produce different values than analytical."""
+        torch.manual_seed(99)
+        model_analytical = InfoGeoNet(
+            num_classes=NUM_CLASSES,
+            feat_channels=FEAT_CHANNELS,
+            num_proposals=NUM_PROPOSALS,
+            num_fisher_samples=0,
+            img_size=IMG_SIZE,
+        ).to(device)
+
+        model_mc = InfoGeoNet(
+            num_classes=NUM_CLASSES,
+            feat_channels=FEAT_CHANNELS,
+            num_proposals=NUM_PROPOSALS,
+            num_fisher_samples=4,
+            mc_blend=0.5,
+            img_size=IMG_SIZE,
+        ).to(device)
+
+        # Share weights so only the MC path differs
+        model_mc.load_state_dict(model_analytical.state_dict(), strict=False)
+        model_analytical.train()
+        model_mc.train()
+
+        with torch.no_grad():
+            fisher_analytical = model_analytical(dummy_images)["fisher_map"]
+            fisher_mc = model_mc(dummy_images)["fisher_map"]
+
+        # MC refinement should produce a different Fisher map
+        diff = (fisher_analytical - fisher_mc).abs().sum()
+        assert diff > 1e-6, "MC refinement did not alter Fisher map"

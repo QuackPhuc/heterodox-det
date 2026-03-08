@@ -3,75 +3,23 @@
 import pytest
 import torch
 
-from models import OTDet, WaveDetNet, ScaleNet, TopoNet, FlowNet
 from losses import OTDetLoss, PeakDetLoss
-from conftest import NUM_CLASSES, FEAT_CHANNELS, NUM_PROPOSALS, IMG_SIZE, BATCH_SIZE
+from conftest import ARCHITECTURES, NUM_CLASSES, IMG_SIZE
 
 
-# ---------------------------------------------------------------------------
-# Model-Loss pairs
-# ---------------------------------------------------------------------------
-
-MODEL_LOSS_PAIRS = {
-    "otdet": (
-        lambda dev: OTDet(
-            num_classes=NUM_CLASSES,
-            num_slots=NUM_PROPOSALS,
-            feat_channels=FEAT_CHANNELS,
-            pretrained_backbone=False,
-            sinkhorn_iters=5,
-            img_size=IMG_SIZE,
-        ).to(dev),
-        lambda: OTDetLoss(num_classes=NUM_CLASSES),
-    ),
-    "wavedet": (
-        lambda dev: WaveDetNet(
-            num_classes=NUM_CLASSES,
-            feat_channels=FEAT_CHANNELS,
-            num_proposals=NUM_PROPOSALS,
-            num_wave_steps=4,
-            img_size=IMG_SIZE,
-        ).to(dev),
-        lambda: PeakDetLoss(num_classes=NUM_CLASSES),
-    ),
-    "scalenet": (
-        lambda dev: ScaleNet(
-            num_classes=NUM_CLASSES,
-            feat_channels=FEAT_CHANNELS,
-            num_proposals=NUM_PROPOSALS,
-            num_scales=4,
-            sigma_range=(0.5, 4.0),
-            img_size=IMG_SIZE,
-        ).to(dev),
-        lambda: PeakDetLoss(num_classes=NUM_CLASSES),
-    ),
-    "toponet": (
-        lambda dev: TopoNet(
-            num_classes=NUM_CLASSES,
-            feat_channels=FEAT_CHANNELS,
-            num_proposals=NUM_PROPOSALS,
-            num_filtration_steps=4,
-            img_size=IMG_SIZE,
-        ).to(dev),
-        lambda: PeakDetLoss(num_classes=NUM_CLASSES),
-    ),
-    "flownet": (
-        lambda dev: FlowNet(
-            num_classes=NUM_CLASSES,
-            feat_channels=FEAT_CHANNELS,
-            num_proposals=NUM_PROPOSALS,
-            ode_steps=4,
-            img_size=IMG_SIZE,
-        ).to(dev),
-        lambda: PeakDetLoss(num_classes=NUM_CLASSES),
-    ),
+# OTDet uses its own loss; all others use PeakDetLoss
+_LOSS_MAP = {
+    "otdet": lambda: OTDetLoss(num_classes=NUM_CLASSES),
 }
+_DEFAULT_LOSS = lambda: PeakDetLoss(num_classes=NUM_CLASSES)
 
 
-@pytest.fixture(params=list(MODEL_LOSS_PAIRS.keys()))
+@pytest.fixture(params=list(ARCHITECTURES.keys()))
 def model_and_loss(request, device):
-    make_model, make_loss = MODEL_LOSS_PAIRS[request.param]
-    return make_model(device), make_loss()
+    arch = request.param
+    model = ARCHITECTURES[arch](device)
+    loss_fn = _LOSS_MAP.get(arch, _DEFAULT_LOSS)()
+    return model, loss_fn
 
 
 class TestModelLossIntegration:
@@ -96,7 +44,6 @@ class TestModelLossIntegration:
             for p in model.parameters()
             if p.grad is not None and p.grad.abs().sum() > 0
         )
-        total = sum(1 for p in model.parameters() if p.requires_grad)
         assert graded > 0, "No parameters received gradients"
 
     def test_zero_gt_no_crash(self, model_and_loss, dummy_images, empty_targets):

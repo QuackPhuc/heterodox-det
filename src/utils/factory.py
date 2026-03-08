@@ -7,7 +7,7 @@ dry_run.py all share one source of truth.
 import torch
 import torch.nn as nn
 
-from models import OTDet, WaveDetNet, ScaleNet, TopoNet, FlowNet
+from models import OTDet, WaveDetNet, ScaleNet, TopoNet, FlowNet, InfoGeoNet
 from losses import OTDetLoss, PeakDetLoss
 
 
@@ -19,7 +19,7 @@ def build_model(arch: str, cfg: dict, img_size: int, device: torch.device) -> nn
     """Construct a detection model from architecture name and config.
 
     Args:
-        arch: one of 'otdet', 'wavedet', 'scalenet', 'toponet', 'flownet'
+        arch: one of 'otdet', 'wavedet', 'scalenet', 'toponet', 'flownet', 'infogeonet'
         cfg: full config dict (must contain 'model' section)
         img_size: input image size
         device: target device
@@ -79,6 +79,16 @@ def build_model(arch: str, cfg: dict, img_size: int, device: torch.device) -> nn
             num_proposals=np_,
             ode_steps=cfg["model"].get("ode_steps", 8),
             ode_method=cfg["model"].get("ode_method", "euler"),
+            img_size=img_size,
+        ).to(device)
+    elif arch == "infogeonet":
+        return InfoGeoNet(
+            num_classes=nc,
+            feat_channels=fc,
+            num_proposals=np_,
+            num_fisher_samples=cfg["model"].get("num_fisher_samples", 0),
+            fisher_eps=cfg["model"].get("fisher_eps", 1e-6),
+            mc_blend=cfg["model"].get("mc_blend", 0.3),
             img_size=img_size,
         ).to(device)
     raise ValueError(f"Unknown architecture: {arch}")

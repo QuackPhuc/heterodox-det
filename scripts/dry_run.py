@@ -1,12 +1,13 @@
-"""Unified dry-run smoke test for all 5 novel architectures.
+"""Unified dry-run smoke test for all 6 novel architectures.
 
 Usage:
-    python scripts/dry_run.py                  # test all 5
-    python scripts/dry_run.py --arch otdet     # test specific one
+    python scripts/dry_run.py                      # test all 6
+    python scripts/dry_run.py --arch otdet         # test specific one
     python scripts/dry_run.py --arch wavedet
     python scripts/dry_run.py --arch scalenet
     python scripts/dry_run.py --arch toponet
     python scripts/dry_run.py --arch flownet
+    python scripts/dry_run.py --arch infogeonet
 """
 
 import os
@@ -24,7 +25,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 )
 
-from models import OTDet, WaveDetNet, ScaleNet, TopoNet, FlowNet
+from models import OTDet, WaveDetNet, ScaleNet, TopoNet, FlowNet, InfoGeoNet
 from data.dataset import YOLOOBBDataset, collate_fn
 from losses import OTDetLoss, PeakDetLoss
 
@@ -121,7 +122,15 @@ def main():
     parser.add_argument(
         "--arch",
         default="all",
-        choices=["all", "otdet", "wavedet", "scalenet", "toponet", "flownet"],
+        choices=[
+            "all",
+            "otdet",
+            "wavedet",
+            "scalenet",
+            "toponet",
+            "flownet",
+            "infogeonet",
+        ],
     )
     args = parser.parse_args()
 
@@ -129,7 +138,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print(f"{'='*60}")
-    print(f"  5 Novel Detection Architectures — Smoke Test")
+    print(f"  6 Novel Detection Architectures — Smoke Test")
     print(f"  Device: {device}")
     print(f"{'='*60}")
 
@@ -202,6 +211,18 @@ def main():
             pk_loss,
         )
 
+    if args.arch in ("all", "infogeonet"):
+        archs["⑥ InfoGeoNet (Fisher Information)"] = (
+            InfoGeoNet(
+                num_classes=nc,
+                feat_channels=128,
+                num_proposals=20,
+                num_fisher_samples=0,
+                img_size=img_size,
+            ).to(device),
+            pk_loss,
+        )
+
     results = {}
     try:
         for name, (model, crit) in archs.items():
@@ -214,7 +235,7 @@ def main():
             print(f"  {name:45s} {'✅ PASS' if ok else '❌ FAIL'}")
         print(f"{'='*60}")
         if all(results.values()):
-            print(f"\n  🎉 ALL 5 ARCHITECTURES PASSED!")
+            print(f"\n  🎉 ALL 6 ARCHITECTURES PASSED!")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

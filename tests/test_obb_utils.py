@@ -165,7 +165,7 @@ class TestOBBIoUTensor:
         assert pred.grad.abs().sum() > 0
 
     def test_range(self, device):
-        rng = torch.manual_seed(42)
+        torch.manual_seed(42)
         pred = torch.rand(50, 5, device=device) * torch.tensor(
             [200, 200, 80, 80, 1.0], device=device
         ) + torch.tensor([50, 50, 10, 10, -0.5], device=device)
