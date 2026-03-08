@@ -120,4 +120,7 @@ class ExperimentLogger:
             self._tb_writer = None
 
     def __del__(self):
-        self.finish()
+        try:
+            self.finish()
+        except Exception:
+            pass

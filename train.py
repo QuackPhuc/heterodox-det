@@ -30,6 +30,7 @@ from data.dataset import YOLOOBBDataset, collate_fn
 from utils.checkpoint import safe_load_checkpoint
 from utils.factory import build_model, build_loss
 from utils.logger import ExperimentLogger
+from utils.early_stopping import EarlyStopping
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +138,18 @@ def parse_args():
         type=str,
         default="ionized-meteorite",
         help="WandB project name (used when --logger includes wandb)",
+    )
+    p.add_argument(
+        "--patience",
+        type=int,
+        default=0,
+        help="Early stopping patience in validation checks (0 to disable)",
+    )
+    p.add_argument(
+        "--es-min-delta",
+        type=float,
+        default=0.0,
+        help="Minimum improvement delta for early stopping",
     )
     return p.parse_args()
 
@@ -248,7 +261,7 @@ def train():
     # Config
     if args.config is None:
         config_map = {
-            "otdet": "configs/default.yaml",
+            "otdet": "configs/otdet.yaml",
             "wavedet": "configs/wavedet.yaml",
             "scalenet": "configs/scalenet.yaml",
             "toponet": "configs/toponet.yaml",
@@ -391,6 +404,13 @@ def train():
         milestones=[warmup_epochs],
     )
 
+    # Early stopping (disabled when patience=0)
+    early_stopper = None
+    if args.patience > 0:
+        early_stopper = EarlyStopping(
+            patience=args.patience, min_delta=args.es_min_delta
+        )
+
     # Resume
     start_epoch = 0
     best_loss = float("inf")
@@ -407,6 +427,8 @@ def train():
         else:
             for _ in range(start_epoch):
                 scheduler.step()
+        if early_stopper is not None and "early_stopping" in ckpt:
+            early_stopper.load_state_dict(ckpt["early_stopping"])
         if is_main():
             print(f"[{args.arch.upper()}] Resumed from epoch {start_epoch}")
 
@@ -431,18 +453,21 @@ def train():
             disable=not is_main(),
         )
 
+        n_total = len(train_loader)
         for step_idx, (images, targets) in enumerate(pbar):
             images = images.to(device)
 
+            # Compute actual accumulation window size for correct scaling
+            window_start = (step_idx // args.accum_steps) * args.accum_steps
+            actual_accum = min(args.accum_steps, n_total - window_start)
+
             preds = model(images)
             loss_dict = criterion(preds, targets, img_size=img_size)
-            loss = loss_dict["total"] / args.accum_steps
+            loss = loss_dict["total"] / actual_accum
 
             loss.backward()
 
-            if (step_idx + 1) % args.accum_steps == 0 or (step_idx + 1) == len(
-                train_loader
-            ):
+            if (step_idx + 1) % args.accum_steps == 0 or (step_idx + 1) == n_total:
                 if grad_clip > 0:
                     nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 optimizer.step()
@@ -504,11 +529,30 @@ def train():
                 "config": cfg,
                 "arch": args.arch,
             }
+            if early_stopper is not None:
+                ckpt["early_stopping"] = early_stopper.state_dict()
             torch.save(ckpt, os.path.join(save_dir, "last.pt"))
 
             if is_best:
                 torch.save(ckpt, os.path.join(save_dir, "best.pt"))
                 print(f"  → Best model saved (loss={best_loss:.4f})")
+
+            # Early stopping check (only when a meaningful metric is available)
+            if early_stopper is not None:
+                should_check = (
+                    val_loader is not None
+                    and args.val_every > 0
+                    and (epoch + 1) % args.val_every == 0
+                ) or val_loader is None
+                if should_check and early_stopper(selection_loss):
+                    print(
+                        f"  → Early stopping at epoch {epoch + 1} "
+                        f"(no improvement for {early_stopper.patience} checks)"
+                    )
+                    logger.log_scalars(
+                        {"train/early_stopped_epoch": epoch + 1}, step=epoch + 1
+                    )
+                    break
 
     if is_main():
         print(f"\n[{args.arch.upper()}] Training complete. Best: {best_loss:.4f}")
@@ -521,17 +565,19 @@ def _run_validation(model, criterion, val_loader, device, img_size, ddp_mode):
     """Run a single validation pass and return average loss."""
     raw_model = model.module if ddp_mode and hasattr(model, "module") else model
     raw_model.eval()
-    val_loss = 0.0
-    n_val = 0
-    with torch.no_grad():
-        for images, targets in val_loader:
-            images = images.to(device)
-            preds = raw_model(images)
-            loss_dict = criterion(preds, targets, img_size=img_size)
-            val_loss += loss_dict["total"].item()
-            n_val += 1
-    raw_model.train()
-    return val_loss / max(n_val, 1)
+    try:
+        val_loss = 0.0
+        n_val = 0
+        with torch.no_grad():
+            for images, targets in val_loader:
+                images = images.to(device)
+                preds = raw_model(images)
+                loss_dict = criterion(preds, targets, img_size=img_size)
+                val_loss += loss_dict["total"].item()
+                n_val += 1
+        return val_loss / max(n_val, 1)
+    finally:
+        raw_model.train()
 
 
 if __name__ == "__main__":

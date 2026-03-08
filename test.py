@@ -13,7 +13,6 @@ import sys
 # Src-layout: add src/ to import path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
-import numpy as np
 import yaml
 import torch
 from torch.utils.data import DataLoader
@@ -31,7 +30,10 @@ def _build_model(arch: str, cfg: dict, img_size: int, device: torch.device):
     import copy
 
     cfg = copy.deepcopy(cfg)
-    cfg["model"]["pretrained"] = False
+    # Only OTDet uses a pretrained backbone; disable to avoid downloading
+    # weights when loading from a checkpoint
+    if arch == "otdet":
+        cfg["model"]["pretrained"] = False
     return build_model(arch, cfg, img_size, device)
 
 
@@ -69,7 +71,7 @@ def evaluate():
 
     if not cfg:
         config_map = {
-            "otdet": "configs/default.yaml",
+            "otdet": "configs/otdet.yaml",
             "wavedet": "configs/wavedet.yaml",
             "scalenet": "configs/scalenet.yaml",
             "toponet": "configs/toponet.yaml",

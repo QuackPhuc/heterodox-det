@@ -6,6 +6,8 @@ Converts the OT transport plan into object detections:
   - Total transported mass → object confidence
 """
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -56,6 +58,24 @@ class OBBHead(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(feat_dim // 4, 1),
         )
+
+        # Prior-based initialization for stable early training
+        self._init_prior_biases()
+
+    def _init_prior_biases(self):
+        """Set output layer biases to domain-aware priors.
+
+        Confidence prior: sigmoid(-2) ≈ 0.12 — most slots are background.
+        Class prior: sigmoid(-π) ≈ 0.04 — matches focal loss assumption
+            that foreground is rare (similar to RetinaNet's π=0.01 prior).
+        """
+        # Confidence: most slots should start with low confidence
+        nn.init.constant_(self.conf_head[-1].bias, -2.0)
+
+        # Class logits: rare foreground assumption
+        prior_prob = 0.01
+        bias_value = -math.log((1 - prior_prob) / prior_prob)
+        nn.init.constant_(self.cls_head[-1].bias, -bias_value)
 
     def forward(
         self,
@@ -117,7 +137,7 @@ class OBBHead(nn.Module):
 
         # Scale centers and wh to absolute pixel coordinates
         centers_abs = centers * img_size
-        wh_abs = wh * img_size
+        wh_abs = wh * (img_size / 10.0)
 
         return {
             "centers": centers_abs,

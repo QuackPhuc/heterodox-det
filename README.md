@@ -4,7 +4,7 @@
 
 | Architecture | Core Principle | Params | Config |
 | --- | --- | --- | --- |
-| **OTDet** | Sinkhorn Optimal Transport | 12.0M | `configs/default.yaml` |
+| **OTDet** | Sinkhorn Optimal Transport | 12.0M | `configs/otdet.yaml` |
 | **WaveDetNet** | Wave Equation Resonance | 1.2M | `configs/wavedet.yaml` |
 | **ScaleNet** | Continuous Scale-Space (SIREN) | 231K | `configs/scalenet.yaml` |
 | **TopoNet** | Topological Persistence | 429K | `configs/toponet.yaml` |

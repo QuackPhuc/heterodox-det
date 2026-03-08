@@ -33,6 +33,9 @@ class InferenceMixin:
         """
         from utils.inference import inference_postprocess
 
+        was_training = self.training
         self.eval()
         preds = self.forward(images)
+        if was_training:
+            self.train()
         return inference_postprocess(preds, images.shape[0], conf_thresh, nms_thresh)

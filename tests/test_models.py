@@ -85,12 +85,18 @@ class TestInference:
     """Inference postprocessing returns well-formed results."""
 
     def test_result_format(self, model, dummy_images):
+        model.train()
         results = model.inference(dummy_images, conf_thresh=0.0)
-        assert not model.training, "Model should be in eval mode after inference"
+        assert model.training, "inference() should restore training mode"
         assert len(results) == BATCH_SIZE
         for r in results:
             assert r["obbs"].ndim == 2 and r["obbs"].shape[1] == 5
             assert len(r["obbs"]) == len(r["scores"]) == len(r["classes"])
+
+    def test_inference_from_eval_stays_eval(self, model, dummy_images):
+        model.eval()
+        model.inference(dummy_images, conf_thresh=0.0)
+        assert not model.training, "inference() should preserve eval mode"
 
     def test_strict_threshold_filters_all(self, model, dummy_images):
         for r in model.inference(dummy_images, conf_thresh=1.0):
