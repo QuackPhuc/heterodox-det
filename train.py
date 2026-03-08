@@ -259,6 +259,8 @@ def train():
     lr = args.lr or cfg["train"]["lr"]
     save_dir = args.save_dir or f"runs/{args.arch}"
     img_size = cfg["data"]["img_size"]
+    effective_lr = lr * get_world_size()
+    effective_lr_min = cfg["train"]["lr_min"] * get_world_size()
 
     if is_main():
         world = get_world_size()
@@ -370,8 +372,7 @@ def train():
     # Scale LR and eta_min by world size (linear scaling rule)
     grad_clip = cfg["train"]["grad_clip"]
     warmup_epochs = cfg["train"]["warmup_epochs"]
-    effective_lr = lr * get_world_size()
-    effective_lr_min = cfg["train"]["lr_min"] * get_world_size()
+    # effective_lr and effective_lr_min computed above (before logger init)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=effective_lr, weight_decay=cfg["train"]["weight_decay"]
     )
