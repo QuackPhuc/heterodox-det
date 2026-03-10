@@ -66,16 +66,16 @@ class OBBHead(nn.Module):
         """Set output layer biases to domain-aware priors.
 
         Confidence prior: sigmoid(-2) ≈ 0.12 — most slots are background.
-        Class prior: sigmoid(-π) ≈ 0.04 — matches focal loss assumption
-            that foreground is rare (similar to RetinaNet's π=0.01 prior).
+        Class prior: sigmoid(log(π/(1-π))) ≈ π=0.01 — matches focal loss
+            assumption that foreground is rare (RetinaNet-style init).
         """
         # Confidence: most slots should start with low confidence
         nn.init.constant_(self.conf_head[-1].bias, -2.0)
 
-        # Class logits: rare foreground assumption
+        # Class logits: rare foreground assumption (π=0.01 → bias ≈ -4.6)
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
-        nn.init.constant_(self.cls_head[-1].bias, -bias_value)
+        nn.init.constant_(self.cls_head[-1].bias, bias_value)
 
     def forward(
         self,

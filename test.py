@@ -112,6 +112,13 @@ def evaluate():
                     {"obbs": t["obbs"].numpy(), "classes": t["classes"].numpy()}
                 )
 
+    total_dets = sum(len(p["obbs"]) for p in all_preds)
+    total_gts = sum(len(t["obbs"]) for t in all_targets)
+    print(
+        f"[{arch.upper()}] Detections: {total_dets} "
+        f"(conf>{args.conf:.2f}), GT boxes: {total_gts}"
+    )
+
     thresholds = cfg.get("eval", {}).get("iou_thresholds", [0.5])
     metrics = compute_map(all_preds, all_targets, thresholds, nc)
 

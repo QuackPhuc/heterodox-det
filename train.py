@@ -552,7 +552,21 @@ def train():
                     logger.log_scalars(
                         {"train/early_stopped_epoch": epoch + 1}, step=epoch + 1
                     )
-                    break
+                    if not ddp_mode:
+                        break
+
+        # Broadcast early-stop decision so all DDP ranks break together
+        if ddp_mode and early_stopper is not None:
+            stop_flag = torch.tensor(
+                [1 if early_stopper.stopped else 0],
+                device=device,
+                dtype=torch.int32,
+            )
+            dist.broadcast(stop_flag, src=0)
+            if stop_flag.item() == 1:
+                if not is_main():
+                    pass  # rank 0 already printed the message
+                break
 
     if is_main():
         print(f"\n[{args.arch.upper()}] Training complete. Best: {best_loss:.4f}")
